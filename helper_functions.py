@@ -490,9 +490,20 @@ def build_hierarchical_schedule(condensed_division_tables: Dict[str, pd.DataFram
             # Process lectures for the current subject
             lectures_df = subject_data_group[subject_data_group['Type'] == 'Lecture']
             if not lectures_df.empty:
-                subject_details['lectures'] = {
-                    'designated_faculty': lectures_df['Faculty'].iloc[0]
-                }
+                # Check if we have valid batches (not '-')
+                # We need to filter out duplicates to check singular vs batched nature
+                # But simple logic: if any row has a batch that is NOT '-', we treat it as batched.
+                unique_batches = [b for b in lectures_df['Batch'].unique() if b != '-']
+                
+                if unique_batches:
+                     subject_details['lectures'] = {
+                        str(batch): {'designated_faculty': faculty}
+                        for batch, faculty in zip(lectures_df['Batch'], lectures_df['Faculty'])
+                    }
+                else:    
+                    subject_details['lectures'] = {
+                        'designated_faculty': lectures_df['Faculty'].iloc[0]
+                    }
             
             # Process labs for the current subject
             labs_df = subject_data_group[subject_data_group['Type'] == 'Lab']
