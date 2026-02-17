@@ -79,12 +79,27 @@ def extract_sheet_data(workbook: openpyxl.workbook.workbook.Workbook, sheet_name
     
     return data_frame
 
+# Special activity keywords that map to non-standard types
+SPECIAL_ACTIVITY_TYPES: Dict[str, str] = {
+    'TUT': 'Tutorial',
+    'TUTORIAL': 'Tutorial',
+    'LIB': 'Library',
+    'LIBRARY': 'Library',
+    'PROJ': 'Project',
+    'PROJECT': 'Project',
+    'MP': 'Project',         # Mini Project
+    'MINIPROJECT': 'Project',
+}
+
 def extract_subject_details(subject_string: str) -> Optional[Dict[str, Any]]:
-    if not isinstance(subject_string, str) or not subject_string.strip() or 'TUT' in subject_string.upper():
+    if not isinstance(subject_string, str) or not subject_string.strip():
         return None
 
     # Remove parenthesis content like "(HJP)", "(TNG)", etc.
     subject_string = re.sub(r'\(.*?\)', '', subject_string).strip()
+
+    # Normalize "&" with surrounding spaces so "NN & DL" becomes "NN&DL"
+    subject_string = re.sub(r'\s*&\s*', '&', subject_string)
 
     # Tokenize by whitespace
     tokens = subject_string.strip().split()
@@ -112,11 +127,19 @@ def extract_subject_details(subject_string: str) -> Optional[Dict[str, Any]]:
     if not semester:
         return {"error": f"Semester not found in: {subject_string}"}
 
-    # Step 2: Identify subject code (all alphabets, usually 2-4 letters)
+    # Step 2: Identify subject code
+    # First check for special activity keywords (may exceed normal length)
     for token in tokens:
-        if re.match(r'^[A-Z&]{2,6}$', token, re.IGNORECASE):
+        if token.strip().upper() in SPECIAL_ACTIVITY_TYPES:
             subject_code = token.strip().upper()
             break
+
+    # Then fall back to standard subject code regex (2-6 alphanumeric/&)
+    if not subject_code:
+        for token in tokens:
+            if re.match(r'^[A-Z&]{2,6}$', token, re.IGNORECASE):
+                subject_code = token.strip().upper()
+                break
 
     if not subject_code:
         return {"error": f"Subject code not found in: {subject_string}"}
@@ -385,7 +408,15 @@ def generate_class_schedules(faculty_schedules: Dict[str, Dict[str, List[Dict[st
     for division_key, entries_list in division_tables.items():
         if entries_list:
             data_frame = pd.DataFrame(entries_list)
-            final_division_dataframes[division_key] = standardize_time_slots(data_frame)
+            data_frame = standardize_time_slots(data_frame)
+
+            # Override activity type for special subject codes (TUT, LIB, PROJ, etc.)
+            for idx, row in data_frame.iterrows():
+                subject_upper = str(row['Subject']).strip().upper()
+                if subject_upper in SPECIAL_ACTIVITY_TYPES:
+                    data_frame.at[idx, 'Type'] = SPECIAL_ACTIVITY_TYPES[subject_upper]
+
+            final_division_dataframes[division_key] = data_frame
         else:
             final_division_dataframes[division_key] = pd.DataFrame(columns=['Subject', 'Type', 'Batch', 'Day', 'Time_Slot', 'Faculty'])
 
@@ -576,12 +607,18 @@ def run_matrix_pipeline(matrix_file_path: str, department: str, college: str = "
             }
         }
 
+    # Step 2b: Build division timetable grids (with Day/Time_Slot preserved)
+    division_timetable_data: Dict[str, List[Dict[str, Any]]] = {}
+    for div_key, df in division_tables.items():
+        division_timetable_data[div_key] = df.to_dict('records')
+
     # Step 3: Condense division timetables
     condensed_division_tables = get_division_course_catalog(division_tables)
     
     if not condensed_division_tables:
         return {
             "results": {},
+            "division_timetables": {},
             "status": {
                 "success": False,
                 "message": "Failed to condense division timetables. No valid course catalog could be generated.",
@@ -599,6 +636,7 @@ def run_matrix_pipeline(matrix_file_path: str, department: str, college: str = "
     if not final_dict:
         return {
             "results": {},
+            "division_timetables": {},
             "status": {
                 "success": False,
                 "message": "Failed to build the final hierarchical schedule. The output structure is empty.",
@@ -614,6 +652,7 @@ def run_matrix_pipeline(matrix_file_path: str, department: str, college: str = "
 
     return {
         "results": final_dict,
+        "division_timetables": division_timetable_data,
         "status": {
             "success": not bool(processing_errors), # True if no errors, False if any errors
             "message": status_message,
