@@ -527,23 +527,29 @@ def build_hierarchical_schedule(condensed_division_tables: Dict[str, pd.DataFram
                 unique_batches = [b for b in lectures_df['Batch'].unique() if b != '-']
                 
                 if unique_batches:
-                     subject_details['lectures'] = {
-                        str(batch): {'designated_faculty': faculty}
-                        for batch, faculty in zip(lectures_df['Batch'], lectures_df['Faculty'])
-                    }
-                else:    
+                    subject_details['lectures'] = {}
+                    for batch in unique_batches:
+                        batch_faculties = lectures_df[lectures_df['Batch'] == batch]['Faculty'].dropna().unique()
+                        subject_details['lectures'][str(batch)] = {
+                            'designated_faculty': ', '.join(batch_faculties)
+                        }
+                else:
+                    # No specific batches, all lectures share the faculties
+                    all_faculties = lectures_df['Faculty'].dropna().unique()
                     subject_details['lectures'] = {
-                        'designated_faculty': lectures_df['Faculty'].iloc[0]
+                        'designated_faculty': ', '.join(all_faculties) if len(all_faculties) > 0 else ''
                     }
             
             # Process labs for the current subject
             labs_df = subject_data_group[subject_data_group['Type'] == 'Lab']
             if not labs_df.empty:
-                # Associate each batch with its designated faculty
-                subject_details['labs'] = {
-                    str(batch): {'designated_faculty': faculty}
-                    for batch, faculty in zip(labs_df['Batch'], labs_df['Faculty'])
-                }
+                # Associate each batch with its designated faculty (supporting multiple faculties)
+                subject_details['labs'] = {}
+                for batch in labs_df['Batch'].unique():
+                    batch_faculties = labs_df[labs_df['Batch'] == batch]['Faculty'].dropna().unique()
+                    subject_details['labs'][str(batch)] = {
+                        'designated_faculty': ', '.join(batch_faculties)
+                    }
             
             # Assign the processed subject data to the final hierarchical structure
             final_consolidated_data[college][department][semester_str][division_str][subject_code] = subject_details
